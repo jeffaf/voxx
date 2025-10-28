@@ -17,6 +17,7 @@ import {
 import { StatusBar } from 'expo-status-bar';
 import { Audio } from 'expo-av';
 import * as Speech from 'expo-speech';
+import * as FileSystem from 'expo-file-system';
 
 // Configuration
 const SERVER_URL = 'http://100.76.158.67:8000';
@@ -35,6 +36,7 @@ export default function App() {
   const [connectionStatus, setConnectionStatus] = useState('unknown'); // green, yellow, red
   const [commandHistory, setCommandHistory] = useState([]);
   const [permissionGranted, setPermissionGranted] = useState(false);
+  const [projectContext, setProjectContext] = useState(null);
 
   // Request microphone permissions on mount
   useEffect(() => {
@@ -64,13 +66,24 @@ export default function App() {
   };
 
   /**
-   * Check server connection status
+   * Check server connection status and fetch project context
    */
   const checkServerConnection = async () => {
     try {
       const response = await fetch(`${SERVER_URL}/`, { timeout: 5000 });
       if (response.ok) {
         setConnectionStatus('green');
+
+        // Fetch project context
+        try {
+          const statusResponse = await fetch(`${SERVER_URL}/status`);
+          if (statusResponse.ok) {
+            const data = await statusResponse.json();
+            setProjectContext(data);
+          }
+        } catch (error) {
+          console.error('Failed to fetch project context:', error);
+        }
       } else {
         setConnectionStatus('yellow');
       }
@@ -161,11 +174,13 @@ export default function App() {
     setStatusMessage('Connecting...');
 
     try {
-      // Read audio file as blob
-      const response = await fetch(audioUri);
-      const blob = await response.blob();
-      const arrayBuffer = await blob.arrayBuffer();
+      // Read audio file as base64
+      console.log('Reading audio file:', audioUri);
+      const audioBase64 = await FileSystem.readAsStringAsync(audioUri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
 
+      console.log('Audio file read, size:', audioBase64.length, 'characters');
       console.log('Connecting to WebSocket...');
 
       // Connect to WebSocket
@@ -176,8 +191,12 @@ export default function App() {
         console.log('WebSocket connected, sending audio...');
         setStatusMessage('Sending audio...');
 
-        // Send audio data
-        ws.send(arrayBuffer);
+        // Send audio data as base64 JSON
+        ws.send(JSON.stringify({
+          type: 'audio',
+          data: audioBase64,
+          format: 'm4a'
+        }));
       };
 
       ws.onmessage = (event) => {
@@ -314,6 +333,19 @@ export default function App() {
       <View style={styles.header}>
         <Text style={styles.logo}>VOXX</Text>
         <Text style={styles.subtitle}>Voice eXecution eXpress</Text>
+        {projectContext && (
+          <View style={styles.projectContext}>
+            <Text style={styles.projectName}>
+              {projectContext.project}
+              {projectContext.git_branch && ` • ${projectContext.git_branch}`}
+            </Text>
+            {projectContext.git_status && (
+              <Text style={styles.projectStatus}>
+                {projectContext.git_status}
+              </Text>
+            )}
+          </View>
+        )}
         <View style={[styles.statusDot, { backgroundColor: getStatusColor() }]} />
       </View>
 
@@ -448,6 +480,25 @@ const styles = StyleSheet.create({
     marginTop: 5,
     letterSpacing: 2,
     textTransform: 'uppercase',
+  },
+  projectContext: {
+    marginTop: 10,
+    alignItems: 'center',
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#FF00FF40',
+    width: '80%',
+  },
+  projectName: {
+    fontSize: 11,
+    color: '#00FFFF',
+    letterSpacing: 1,
+    fontWeight: '600',
+  },
+  projectStatus: {
+    fontSize: 9,
+    color: '#888',
+    marginTop: 2,
   },
   statusDot: {
     position: 'absolute',

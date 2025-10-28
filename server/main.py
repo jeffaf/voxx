@@ -8,6 +8,8 @@ import time
 import logging
 import subprocess
 import tempfile
+import json
+import base64
 from typing import Dict, Any
 from datetime import datetime
 
@@ -294,6 +296,61 @@ async def root():
     }
 
 
+@app.get("/status")
+async def get_status():
+    """Get current project context (directory, git branch, etc.)"""
+    try:
+        # Get current working directory
+        cwd = os.getcwd()
+        project_name = os.path.basename(cwd)
+
+        # Get git branch if in a git repo
+        git_branch = None
+        git_status = None
+        try:
+            result = subprocess.run(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                timeout=2
+            )
+            if result.returncode == 0:
+                git_branch = result.stdout.strip()
+
+                # Get short git status
+                result = subprocess.run(
+                    ["git", "status", "--short"],
+                    cwd=cwd,
+                    capture_output=True,
+                    text=True,
+                    timeout=2
+                )
+                if result.returncode == 0:
+                    changes = len(result.stdout.strip().split('\n')) if result.stdout.strip() else 0
+                    git_status = f"{changes} changes" if changes > 0 else "clean"
+        except:
+            pass
+
+        return {
+            "project": project_name,
+            "directory": cwd,
+            "git_branch": git_branch,
+            "git_status": git_status,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+
+    except Exception as e:
+        logger.error(f"Status endpoint error: {str(e)}")
+        return {
+            "project": "unknown",
+            "directory": "unknown",
+            "git_branch": None,
+            "git_status": None,
+            "error": str(e)
+        }
+
+
 @app.websocket("/ws/voice")
 async def voice_websocket(websocket: WebSocket):
     """
@@ -319,8 +376,19 @@ async def voice_websocket(websocket: WebSocket):
             "message": "Receiving audio..."
         })
 
-        audio_data = await websocket.receive_bytes()
-        logger.info(f"Received {len(audio_data)} bytes of audio")
+        # Receive base64 audio data as JSON
+        message = await websocket.receive_text()
+        audio_json = json.loads(message)
+
+        if audio_json.get('type') != 'audio':
+            raise ValueError("Expected audio data")
+
+        audio_base64 = audio_json.get('data')
+        logger.info(f"Received {len(audio_base64)} characters of base64 audio")
+
+        # Decode base64 to bytes
+        audio_data = base64.b64decode(audio_base64)
+        logger.info(f"Decoded to {len(audio_data)} bytes")
 
         # Save audio to temporary file
         with tempfile.NamedTemporaryFile(delete=False, suffix=".m4a") as temp_file:
