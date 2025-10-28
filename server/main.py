@@ -93,31 +93,31 @@ COMPLEX_KEYWORDS = ['refactor', 'analyze', 'optimize', 'test suite', 'full test'
 SIMPLE_KEYWORDS = ['fix', 'add', 'change', 'update', 'create']
 
 
-def determine_agent_count(command: str) -> int:
+def determine_complexity(command: str) -> str:
     """
-    Intelligently determine the optimal number of agents based on command complexity.
+    Determine task complexity based on command keywords.
 
     Args:
         command: The transcribed voice command
 
     Returns:
-        Number of agents to use (2-5+)
+        Complexity level: 'simple', 'standard', or 'complex'
     """
     command_lower = command.lower()
 
     # Check for complex task keywords
     if any(keyword in command_lower for keyword in COMPLEX_KEYWORDS):
-        logger.info(f"Complex task detected, using 5 agents")
-        return 5
+        logger.info(f"Complex task detected")
+        return 'complex'
 
     # Check for simple task keywords
     if any(keyword in command_lower for keyword in SIMPLE_KEYWORDS):
-        logger.info(f"Simple task detected, using 2 agents")
-        return 2
+        logger.info(f"Simple task detected")
+        return 'simple'
 
-    # Default to configured default (usually 3)
-    logger.info(f"Standard task detected, using {DEFAULT_AGENT_COUNT} agents")
-    return DEFAULT_AGENT_COUNT
+    # Default to standard
+    logger.info(f"Standard task detected")
+    return 'standard'
 
 
 def validate_audio_file(file: UploadFile) -> bool:
@@ -190,13 +190,13 @@ def transcribe_audio(audio_file_path: str) -> str:
         )
 
 
-def execute_claude_code(command: str, agent_count: int) -> Dict[str, Any]:
+def execute_claude_code(command: str, complexity: str) -> Dict[str, Any]:
     """
-    Execute command via Claude Code CLI with multi-agent support.
+    Execute command via Claude Code CLI.
 
     Args:
         command: The command to execute
-        agent_count: Number of agents to use
+        complexity: Task complexity level (simple, standard, complex)
 
     Returns:
         Dict with execution results
@@ -208,18 +208,21 @@ def execute_claude_code(command: str, agent_count: int) -> Dict[str, Any]:
             detail="Invalid command length"
         )
 
-    # Determine timeout based on agent count and complexity
-    timeout = 60  # Default 60s
-    if agent_count >= 5:
-        timeout = 120  # Complex tasks get 120s
+    # Determine timeout based on complexity
+    timeout_map = {
+        'simple': 60,
+        'standard': 90,
+        'complex': 120
+    }
+    timeout = timeout_map.get(complexity, 90)
 
     try:
         start_time = time.time()
-        logger.info(f"Executing Claude Code with {agent_count} agents: '{command}'")
+        logger.info(f"Executing Claude Code ({complexity} task): '{command}'")
 
-        # Build command with agent count
+        # Build command - using -p for print mode (non-interactive)
         # Note: Using list form prevents shell injection
-        cmd = ["claude", "code", command, "--agent-count", str(agent_count)]
+        cmd = ["claude", "code", "-p", command]
 
         # Execute subprocess with timeout and no shell
         result = subprocess.run(
@@ -246,7 +249,7 @@ def execute_claude_code(command: str, agent_count: int) -> Dict[str, Any]:
         return {
             "text": output,
             "success": success,
-            "agent_count": agent_count,
+            "complexity": complexity,
             "execution_time": round(execution_time, 2),
             "exit_code": result.returncode
         }
@@ -256,7 +259,7 @@ def execute_claude_code(command: str, agent_count: int) -> Dict[str, Any]:
         return {
             "text": f"Command execution timed out after {timeout} seconds",
             "success": False,
-            "agent_count": agent_count,
+            "complexity": complexity,
             "execution_time": timeout,
             "exit_code": -1
         }
@@ -273,7 +276,7 @@ def execute_claude_code(command: str, agent_count: int) -> Dict[str, Any]:
         return {
             "text": f"Execution error: {str(e)}",
             "success": False,
-            "agent_count": agent_count,
+            "complexity": complexity,
             "execution_time": 0,
             "exit_code": -1
         }
@@ -334,16 +337,16 @@ async def process_voice_command(request: Request, audio: UploadFile = File(...))
                 detail="No speech detected in audio"
             )
 
-        # Determine optimal agent count
-        agent_count = determine_agent_count(transcription)
+        # Determine task complexity
+        complexity = determine_complexity(transcription)
 
         # Execute command via Claude Code
-        execution_result = execute_claude_code(transcription, agent_count)
+        execution_result = execute_claude_code(transcription, complexity)
 
         # Log command for audit trail
         logger.info(
             f"AUDIT: IP={client_ip} | Command='{transcription}' | "
-            f"Agents={agent_count} | Success={execution_result['success']} | "
+            f"Complexity={complexity} | Success={execution_result['success']} | "
             f"Time={execution_result['execution_time']}s"
         )
 
@@ -352,7 +355,7 @@ async def process_voice_command(request: Request, audio: UploadFile = File(...))
             "command": transcription,
             "text": execution_result["text"],
             "success": execution_result["success"],
-            "agent_count": agent_count,
+            "complexity": complexity,
             "execution_time": execution_result["execution_time"],
             "timestamp": datetime.utcnow().isoformat()
         })

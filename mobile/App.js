@@ -193,14 +193,14 @@ export default function App() {
       // Update UI with results
       setTranscription(data.command);
       setResponse(data.text);
-      setAgentCount(data.agent_count);
+      setAgentCount(data.complexity || 'standard'); // Show complexity level
       setExecutionTime(data.execution_time);
 
       // Add to history
       addToHistory({
         command: data.command,
         success: data.success,
-        agentCount: data.agent_count,
+        agentCount: data.complexity || 'standard',
         time: data.execution_time,
         timestamp: new Date().toLocaleTimeString(),
       });
@@ -284,7 +284,7 @@ export default function App() {
             {agentCount && (
               <View style={styles.metricCard}>
                 <Text style={styles.metricValue}>{agentCount}</Text>
-                <Text style={styles.metricLabel}>Agents</Text>
+                <Text style={styles.metricLabel}>Complexity</Text>
               </View>
             )}
             {executionTime && (
@@ -313,7 +313,7 @@ export default function App() {
                 <Text style={styles.historyCommand}>{item.command}</Text>
                 <View style={styles.historyMeta}>
                   <Text style={styles.historyMetaText}>
-                    {item.agentCount} agents • {item.time}s • {item.timestamp}
+                    {item.agentCount} • {item.time}s • {item.timestamp}
                   </Text>
                   <Text style={[
                     styles.historyStatus,
