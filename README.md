@@ -14,7 +14,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![Node](https://img.shields.io/badge/node-18+-green.svg)](https://nodejs.org/)
-[![Expo](https://img.shields.io/badge/Expo-SDK%2052-000020.svg?style=flat&logo=expo)](https://expo.dev/)
+[![Expo](https://img.shields.io/badge/Expo-SDK%2053-000020.svg?style=flat&logo=expo)](https://expo.dev/)
 [![Tailscale](https://img.shields.io/badge/Tailscale-Secured-blue.svg)](https://tailscale.com/)
 [![OpenAI](https://img.shields.io/badge/OpenAI-Whisper-412991.svg)](https://openai.com/research/whisper)
 
