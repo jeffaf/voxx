@@ -222,8 +222,8 @@ def execute_claude_code(command: str, complexity: str) -> Dict[str, Any]:
 
         # Build command - using -p for print mode (non-interactive)
         # Note: Using list form prevents shell injection
-        # Format: claude code [prompt] -p
-        cmd = ["claude", "code", command, "-p"]
+        # Format: claude [prompt] -p
+        cmd = ["claude", command, "-p"]
 
         # Execute subprocess with timeout and no shell
         result = subprocess.run(
