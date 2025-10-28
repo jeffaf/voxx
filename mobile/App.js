@@ -27,6 +27,7 @@ export default function App() {
   const [recording, setRecording] = useState(null);
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [statusMessage, setStatusMessage] = useState('');
   const [transcription, setTranscription] = useState('');
   const [response, setResponse] = useState('');
   const [agentCount, setAgentCount] = useState(null);
@@ -150,70 +151,123 @@ export default function App() {
   };
 
   /**
-   * Send audio file to server for processing
+   * Send audio file to server via WebSocket for streaming processing
    */
   const sendAudioToServer = async (audioUri, retryCount = 0) => {
     const MAX_RETRIES = 3;
     setIsProcessing(true);
+    setResponse('');
+    setTranscription('');
+    setStatusMessage('Connecting...');
 
     try {
-      // Create form data
-      const formData = new FormData();
-      formData.append('audio', {
-        uri: audioUri,
-        type: 'audio/m4a',
-        name: 'recording.m4a',
-      });
+      // Read audio file as blob
+      const response = await fetch(audioUri);
+      const blob = await response.blob();
+      const arrayBuffer = await blob.arrayBuffer();
 
-      console.log('Sending audio to server...');
+      console.log('Connecting to WebSocket...');
 
-      // Send request with timeout
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 120000); // 120s timeout
+      // Connect to WebSocket
+      const ws = new WebSocket(SERVER_URL.replace('http://', 'ws://').replace('https://', 'wss://') + '/ws/voice');
 
-      const response = await fetch(`${SERVER_URL}/voice`, {
-        method: 'POST',
-        body: formData,
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-        signal: controller.signal,
-      });
+      // Set up message handler
+      ws.onopen = () => {
+        console.log('WebSocket connected, sending audio...');
+        setStatusMessage('Sending audio...');
 
-      clearTimeout(timeoutId);
+        // Send audio data
+        ws.send(arrayBuffer);
+      };
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Server error: ${response.status} - ${errorText}`);
-      }
+      ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        console.log('WebSocket message:', data);
 
-      const data = await response.json();
-      console.log('Server response:', data);
+        switch (data.type) {
+          case 'connected':
+            setStatusMessage(data.message);
+            setConnectionStatus('green');
+            break;
 
-      // Update UI with results
-      setTranscription(data.command);
-      setResponse(data.text);
-      setAgentCount(data.complexity || 'standard'); // Show complexity level
-      setExecutionTime(data.execution_time);
+          case 'status':
+            setStatusMessage(data.message);
+            break;
 
-      // Add to history
-      addToHistory({
-        command: data.command,
-        success: data.success,
-        agentCount: data.complexity || 'standard',
-        time: data.execution_time,
-        timestamp: new Date().toLocaleTimeString(),
-      });
+          case 'transcription':
+            setTranscription(data.text);
+            setStatusMessage('Got transcription!');
+            break;
 
-      // Speak response
-      if (data.text) {
-        Speech.speak(data.text, { rate: 1.1 });
-      }
+          case 'complexity':
+            setAgentCount(data.level);
+            break;
 
-      setConnectionStatus('green');
+          case 'response_chunk':
+            // Append streaming response chunks
+            setResponse((prev) => prev + data.text + '\n');
+            break;
+
+          case 'complete':
+            setStatusMessage('Complete!');
+            setExecutionTime(data.execution_time);
+            setIsProcessing(false);
+
+            // Add to history
+            addToHistory({
+              command: transcription,
+              success: data.success,
+              agentCount: data.complexity || 'standard',
+              time: data.execution_time,
+              timestamp: new Date().toLocaleTimeString(),
+            });
+
+            // Speak full response
+            if (response) {
+              Speech.speak(response, { rate: 1.1 });
+            }
+
+            ws.close();
+            break;
+
+          case 'error':
+            setStatusMessage('Error!');
+            Alert.alert('Error', data.message);
+            setResponse('Error: ' + data.message);
+            setIsProcessing(false);
+            setConnectionStatus('red');
+            ws.close();
+            break;
+        }
+      };
+
+      ws.onerror = (error) => {
+        console.error('WebSocket error:', error);
+        setStatusMessage('Connection error!');
+
+        // Retry logic
+        if (retryCount < MAX_RETRIES) {
+          console.log(`Retrying... (${retryCount + 1}/${MAX_RETRIES})`);
+          setTimeout(() => {
+            sendAudioToServer(audioUri, retryCount + 1);
+          }, 1000);
+        } else {
+          setConnectionStatus('red');
+          Alert.alert(
+            'Connection Failed',
+            `Could not connect to server after ${MAX_RETRIES} attempts. Check Tailscale connection.`
+          );
+          setIsProcessing(false);
+        }
+      };
+
+      ws.onclose = () => {
+        console.log('WebSocket closed');
+      };
 
     } catch (error) {
-      console.error('Server request failed:', error);
+      console.error('Audio processing failed:', error);
+      setStatusMessage('Error!');
 
       // Retry logic
       if (retryCount < MAX_RETRIES) {
@@ -223,14 +277,10 @@ export default function App() {
         }, 1000);
       } else {
         setConnectionStatus('red');
-        Alert.alert(
-          'Connection Failed',
-          `Could not connect to server after ${MAX_RETRIES} attempts. Check Tailscale connection.`
-        );
+        Alert.alert('Error', error.message);
         setResponse('Error: ' + error.message);
+        setIsProcessing(false);
       }
-    } finally {
-      setIsProcessing(false);
     }
   };
 
@@ -334,7 +384,9 @@ export default function App() {
         {isProcessing ? (
           <View style={styles.processingContainer}>
             <ActivityIndicator size="large" color="#00FFFF" />
-            <Text style={styles.processingText}>PROCESSING...</Text>
+            <Text style={styles.processingText}>
+              {statusMessage || 'PROCESSING...'}
+            </Text>
           </View>
         ) : (
           <TouchableOpacity

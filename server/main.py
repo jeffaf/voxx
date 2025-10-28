@@ -11,7 +11,7 @@ import tempfile
 from typing import Dict, Any
 from datetime import datetime
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, Request
+from fastapi import FastAPI, UploadFile, File, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -292,6 +292,181 @@ async def root():
         "version": "1.0.0",
         "timestamp": datetime.utcnow().isoformat()
     }
+
+
+@app.websocket("/ws/voice")
+async def voice_websocket(websocket: WebSocket):
+    """
+    WebSocket endpoint for streaming voice command processing.
+    Provides real-time status updates and streaming responses.
+    """
+    await websocket.accept()
+    client_ip = websocket.client.host
+    logger.info(f"WebSocket connected from {client_ip}")
+
+    temp_file_path = None
+
+    try:
+        # Send connection confirmation
+        await websocket.send_json({
+            "type": "connected",
+            "message": "Ready to receive audio"
+        })
+
+        # Receive audio data
+        await websocket.send_json({
+            "type": "status",
+            "message": "Receiving audio..."
+        })
+
+        audio_data = await websocket.receive_bytes()
+        logger.info(f"Received {len(audio_data)} bytes of audio")
+
+        # Save audio to temporary file
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".m4a") as temp_file:
+            temp_file_path = temp_file.name
+            temp_file.write(audio_data)
+
+        # Transcribe audio
+        await websocket.send_json({
+            "type": "status",
+            "message": "Transcribing audio with Whisper..."
+        })
+
+        try:
+            transcription = transcribe_audio(temp_file_path)
+            logger.info(f"Transcription: '{transcription}'")
+
+            await websocket.send_json({
+                "type": "transcription",
+                "text": transcription
+            })
+
+        except Exception as e:
+            logger.error(f"Transcription error: {str(e)}")
+            await websocket.send_json({
+                "type": "error",
+                "message": f"Transcription failed: {str(e)}"
+            })
+            return
+
+        # Determine complexity
+        complexity = determine_complexity(transcription)
+        await websocket.send_json({
+            "type": "complexity",
+            "level": complexity
+        })
+
+        await websocket.send_json({
+            "type": "status",
+            "message": f"Executing ({complexity} task)..."
+        })
+
+        # Execute Claude with streaming
+        start_time = time.time()
+        cmd = ["claude", transcription, "-p", "--output-format=stream-json"]
+
+        timeout_map = {'simple': 60, 'standard': 90, 'complex': 120}
+        timeout = timeout_map.get(complexity, 90)
+
+        logger.info(f"Executing: {' '.join(cmd)}")
+
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1
+        )
+
+        full_response = ""
+
+        try:
+            # Stream output line by line with timeout
+            import select
+            poll = select.poll()
+            poll.register(process.stdout, select.POLLIN)
+
+            timeout_ms = timeout * 1000
+            start_poll = time.time()
+
+            while True:
+                # Check for timeout
+                if time.time() - start_poll > timeout:
+                    process.kill()
+                    raise subprocess.TimeoutExpired(cmd, timeout)
+
+                # Poll for data with 1 second timeout
+                if poll.poll(1000):
+                    line = process.stdout.readline()
+                    if not line:
+                        break
+
+                    # Stream the chunk
+                    full_response += line
+                    await websocket.send_json({
+                        "type": "response_chunk",
+                        "text": line.rstrip('\n')
+                    })
+
+            # Wait for process to complete
+            process.wait(timeout=5)
+
+            execution_time = time.time() - start_time
+            success = process.returncode == 0
+
+            logger.info(f"Claude execution completed in {execution_time:.2f}s (exit code: {process.returncode})")
+
+            # Log command for audit trail
+            logger.info(
+                f"AUDIT: IP={client_ip} | Command='{transcription}' | "
+                f"Complexity={complexity} | Success={success} | "
+                f"Time={execution_time:.2f}s"
+            )
+
+            # Send completion
+            await websocket.send_json({
+                "type": "complete",
+                "success": success,
+                "complexity": complexity,
+                "execution_time": round(execution_time, 2),
+                "timestamp": datetime.utcnow().isoformat()
+            })
+
+        except subprocess.TimeoutExpired:
+            logger.error(f"Command timed out after {timeout}s")
+            await websocket.send_json({
+                "type": "error",
+                "message": f"Command timed out after {timeout} seconds"
+            })
+            process.kill()
+
+    except WebSocketDisconnect:
+        logger.info(f"WebSocket disconnected from {client_ip}")
+
+    except Exception as e:
+        logger.error(f"WebSocket error: {str(e)}", exc_info=True)
+        try:
+            await websocket.send_json({
+                "type": "error",
+                "message": f"Server error: {str(e)}"
+            })
+        except:
+            pass
+
+    finally:
+        # Clean up temporary file
+        if temp_file_path and os.path.exists(temp_file_path):
+            try:
+                os.unlink(temp_file_path)
+                logger.debug(f"Temporary file deleted: {temp_file_path}")
+            except Exception as e:
+                logger.warning(f"Failed to delete temporary file: {e}")
+
+        try:
+            await websocket.close()
+        except:
+            pass
 
 
 @app.post("/voice")
