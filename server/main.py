@@ -74,10 +74,18 @@ openai.api_key = OPENAI_API_KEY
 ALLOWED_AUDIO_TYPES = {
     'audio/mp4',
     'audio/x-m4a',
+    'audio/m4a',
     'audio/mpeg',
     'audio/wav',
     'audio/x-wav',
-    'audio/mp3'
+    'audio/mp3',
+    'audio/aac',
+    'audio/x-aac',
+    'audio/3gpp',
+    'audio/3gpp2',
+    'video/mp4',  # Sometimes m4a files are detected as video/mp4
+    'video/3gpp',
+    'application/octet-stream'  # Fallback for some Android recordings
 }
 
 # Complex task keywords that require more agents
