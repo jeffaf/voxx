@@ -10,12 +10,13 @@
     "web": "expo start --web"
   },
   "dependencies": {
-    "expo": "~52.0.0",
-    "expo-av": "~14.0.0",
-    "expo-speech": "~12.0.0",
+    "expo": "~53.0.0",
+    "expo-asset": "~11.0.1",
+    "expo-av": "~15.0.1",
+    "expo-speech": "~13.0.0",
     "expo-status-bar": "~2.0.0",
     "react": "18.3.1",
-    "react-native": "0.76.0"
+    "react-native": "0.77.0-rc.2"
   },
   "devDependencies": {
     "@babel/core": "^7.24.0"

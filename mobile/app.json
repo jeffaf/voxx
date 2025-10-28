@@ -38,7 +38,8 @@
         {
           "microphonePermission": "Allow VOXX to access your microphone for voice commands."
         }
-      ]
+      ],
+      "expo-asset"
     ]
   }
 }
